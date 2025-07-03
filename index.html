@@ -122,7 +122,7 @@
         navigator.serviceWorker.getRegistration().then(reg => {
           swStatus.textContent = reg ? 'Service Worker already registered' : 'No Service Worker present';
         });
-        navigator.serviceWorker.register('/sw.js')
+        navigator.serviceWorker.register('sw.js')
           .then(reg => console.log('SW registered:', reg.scope))
           .catch(err => console.error('SW registration failed:', err));
       } else {
