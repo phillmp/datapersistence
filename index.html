@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Storage & Service Worker Test</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    #store-btn { margin-top: 1rem; }
+    #sw-status { margin-bottom: 1rem; font-weight: bold; }
+    .results { margin-top: 1rem; }
+    .results h3 { margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div id="sw-status">Checking Service Worker status...</div>
+  <div id="message"></div>
+  <button id="store-btn" style="display:none">store data to browser</button>
+
+  <script>
+    // ---- Storage Detection & Management ----
+    function detectStorage() {
+      // sync checks
+      const present = [];
+      const empty = [];
+
+      // localStorage
+      if (localStorage.getItem('testKey')) present.push('localStorage');
+      else empty.push('localStorage');
+
+      // sessionStorage
+      if (sessionStorage.getItem('testKey')) present.push('sessionStorage');
+      else empty.push('sessionStorage');
+
+      // cookies
+      if (document.cookie.split('; ').find(row => row.startsWith('testCookie='))) present.push('cookies');
+      else empty.push('cookies');
+
+      // IndexedDB
+      const idbPromise = new Promise(resolve => {
+        const req = indexedDB.open('testDB');
+        req.onupgradeneeded = () => req.result.createObjectStore('store');
+        req.onsuccess = () => {
+          const store = req.result.transaction('store', 'readonly').objectStore('store');
+          store.get('test').onsuccess = e => {
+            if (e.target.result) present.push('indexedDB');
+            else empty.push('indexedDB');
+            resolve();
+          };
+        };
+        req.onerror = () => {
+          empty.push('indexedDB');
+          resolve();
+        };
+      });
+
+      // Cache API
+      const cachePromise = caches.has('test-cache')
+        .then(has => {
+          if (has) {
+            return caches.open('test-cache')
+              .then(cache => cache.match('test-data'))
+              .then(res => {
+                if (res) present.push('cache');
+                else empty.push('cache');
+              });
+          } else {
+            empty.push('cache');
+          }
+        })
+        .catch(() => {
+          empty.push('cache');
+        });
+
+      return Promise.all([idbPromise, cachePromise]).then(() => ({ present, empty }));
+    }
+
+    function render() {
+      detectStorage().then(({ present, empty }) => {
+        const msg = document.getElementById('message');
+        const btn = document.getElementById('store-btn');
+        msg.innerHTML = '';
+
+        // If nothing present, show first-visit
+        if (!present.length) {
+          msg.textContent = 'first visit — no data found';
+          btn.style.display = 'inline-block';
+        } else {
+          btn.style.display = 'none';
+          const container = document.createElement('div');
+          container.className = 'results';
+
+          // present
+          const h3p = document.createElement('h3');
+          h3p.textContent = 'Previously detected:';
+          const ulp = document.createElement('ul');
+          present.forEach(loc => { const li = document.createElement('li'); li.textContent = loc; ulp.appendChild(li); });
+          container.appendChild(h3p);
+          container.appendChild(ulp);
+
+          // empty
+          const h3e = document.createElement('h3');
+          h3e.textContent = 'Checked but empty:';
+          const ule = document.createElement('ul');
+          empty.forEach(loc => { const li = document.createElement('li'); li.textContent = loc; ule.appendChild(li); });
+          container.appendChild(h3e);
+          container.appendChild(ule);
+
+          msg.appendChild(container);
+        }
+      });
+    }
+
+    window.addEventListener('load', () => {
+      // Render storage status
+      render();
+
+      // SW status and registration
+      const swStatus = document.getElementById('sw-status');
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistration().then(reg => {
+          swStatus.textContent = reg ? 'Service Worker already registered' : 'No Service Worker present';
+        });
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => console.log('SW registered:', reg.scope))
+          .catch(err => console.error('SW registration failed:', err));
+      } else {
+        swStatus.textContent = 'Service Workers not supported';
+      }
+
+      // Store data button handler
+      document.getElementById('store-btn').addEventListener('click', () => {
+        // write into all stores then re-render
+        localStorage.setItem('testKey', 'foo');
+        sessionStorage.setItem('testKey', 'foo');
+        document.cookie = 'testCookie=foo; path=/';
+        const req = indexedDB.open('testDB');
+        req.onupgradeneeded = () => req.result.createObjectStore('store');
+        req.onsuccess = () => {
+          const tx = req.result.transaction('store', 'readwrite');
+          tx.objectStore('store').put('foo', 'test');
+          tx.oncomplete = () => render();
+        };
+        caches.open('test-cache').then(cache => cache.put('test-data', new Response('foo')).then(() => render()));
+      });
+    });
+  </script>
+</body>
+</html>
